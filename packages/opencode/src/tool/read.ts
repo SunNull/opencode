@@ -8,7 +8,7 @@ import DESCRIPTION from "./read.txt"
 import { InstanceState } from "@/effect/instance-state"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Instruction } from "../session/instruction"
-import { isPdfAttachment, sniffAttachmentMime } from "@/util/media"
+import { isPdfAttachment, isVideoAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -17,6 +17,7 @@ const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
 const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024 // 50 MB — matches multimodal video API base64 limit
 
 class ReadStop extends Schema.TaggedErrorClass<ReadStop>()("ReadStop", {}) {}
 
@@ -302,10 +303,24 @@ export const ReadTool = Tool.define<
 
       const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
+      const isVideo = isVideoAttachment(mime)
 
-      if (isImage || isPdfAttachment(mime)) {
+      if (isImage || isPdfAttachment(mime) || isVideo) {
+        if (isVideo && Number(stat.size) > MAX_VIDEO_BYTES) {
+          return yield* Effect.fail(
+            new Error(
+              `Video file too large: ${(Number(stat.size) / 1024 / 1024).toFixed(1)} MB. ` +
+                `Max supported size is ${MAX_VIDEO_BYTES / 1024 / 1024} MB. ` +
+                `Compress or trim the video and retry.`,
+            ),
+          )
+        }
         const bytes = yield* fs.readFile(filepath)
-        const msg = isPdfAttachment(mime) ? "PDF read successfully" : "Image read successfully"
+        const msg = isPdfAttachment(mime)
+          ? "PDF read successfully"
+          : isVideo
+            ? "Video read successfully"
+            : "Image read successfully"
         return {
           title,
           output: msg,
