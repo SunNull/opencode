@@ -10,13 +10,15 @@ OpenCode 原生支持图片（jpeg/png/gif/webp）和 PDF 作为文件附件传�
 
 ## 改造内容
 
-### 改动的文件（4个）
+### 改动的文件
 
 | 文件 | 改动说明 |
 |------|---------|
-| `packages/opencode/src/util/media.ts` | 新增 `isVideoAttachment()` 函数 + 视频 magic bytes 检测（mp4/webm/mov/avi/mkv） |
-| `packages/opencode/src/tool/read.ts` | `read` 工具识别视频文件，转 base64 附件返回（50MB 上限） |
-| `packages/llm/src/protocols/openai-chat.ts` | 协议层新增 `video_url` 内容类型，`lowerMedia` 函数将视频转为 `video_url` |
+| `packages/opencode/src/util/media.ts` | `isVideoAttachment()` / `isAudioAttachment()` + 视频/音频 magic bytes 检测（mp4/webm/mov/avi/mkv；mp3/wav/flac/ogg） |
+| `packages/opencode/src/tool/read.ts` | `read` 工具识别视频/音频，转 base64 附件返回（50MB 上限）；超限时调 ffmpeg 自动压缩 |
+| `packages/opencode/src/tool/read.txt` | 工具描述加入视频/音频说明 |
+| `packages/llm/src/protocols/openai-chat.ts` | 协议层新增 `video_url` 与 `input_audio` 内容类型，`lowerMedia` 按媒体类型分流 |
+| `packages/llm/src/protocols/shared.ts` | `AUDIO_MIMES` 扩充（+m4a/x-m4a/mp4，对齐 MiMo 支持格式） |
 | `packages/opencode/src/session/llm/native-runtime.ts` | 门卫放行 OpenAI-compatible provider（如 MiMo）使用 native runtime |
 
 ### 数据流
@@ -103,18 +105,20 @@ opencode 内部其实已有视频的"半成品"基础设施：
 - [x] `openai-chat.ts`：协议层 `video_url` 转换
 - [x] `native-runtime.ts`：门卫放行 OpenAI-compatible provider
 - [x] CLI 模式端到端测试通过（MiMo mimo-v2-omni + test_video.mp4）
+- [x] `read.txt` 工具描述加入视频/音频说明
+- [x] 音频读取支持：`media.ts` `isAudioAttachment()` + 音频 magic bytes（mp3/wav/flac/ogg）；`read.ts` audio 分支（50MB 上限）；`shared.ts` 扩充 `AUDIO_MIMES`（+m4a/x-m4a/mp4）
+- [x] 协议层音频转换：`openai-chat.ts` `lowerMedia` 新增 `input_audio` 分支（`{ type: "input_audio", input_audio: { data } }`，对齐 MiMo OpenAI 兼容 API）
+- [x] 视频/音频压缩预处理：超 50MB 时自动调 ffmpeg 转码（视频→H.264 mp4，音频→AAC m4a），失败回退明确的超限报错；`AppProcess.defaultLayer` 局部提供，不污染 ReadTool 的 `R`
+- [x] opencode 与 mimo-code 仓库读取层改动同步（mimo-code 发送层见其 VIDEO-SUPPORT.md）
 
 ## 进行中
 
 - [ ] TUI 模式 Windows 崩溃修复（Bun `opentui.dll` segfault）
 - [ ] 模型 modalities 配置标准化
-- [ ] `read.txt` 工具描述更新（加入视频说明）
 
 ## 未来计划
 
-- [ ] **AI SDK 路径 patch**：给 `@ai-sdk/openai-compatible` 打补丁，让默认运行时也支持 `video_url`，无需开启 experimental native runtime
-- [ ] **音频支持**：同样的改造模式扩展到音频文件（`shared.ts` 已定义 `AUDIO_MIMES`）
-- [ ] **视频压缩预处理**：超 50MB 的视频自动用 ffmpeg 压缩/截取后再发送
+- [ ] **AI SDK 路径 patch**：给 `@ai-sdk/openai-compatible` 打补丁，让默认运行时也支持 `video_url`/`input_audio`，无需开启 experimental native runtime（按当前策略暂缓）
 - [ ] **批量视频分析管线**：结合 ffmpeg 镜头切分 + 并发 API 调用，实现自动视频剪辑
 - [ ] **多模态主导架构**：当多模态模型推理能力成熟后，直接用多模态模型作为主模型（而非文字模型 + 视觉辅助）
 - [ ] **向 opencode 上游提交 PR**
