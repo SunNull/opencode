@@ -24,6 +24,7 @@ import { ToolStream } from "./utils/tool-stream"
 const ADAPTER = "openai-chat"
 const IMAGE_MIMES = new Set<string>(ProviderShared.IMAGE_MIMES)
 const VIDEO_MIMES = new Set<string>(ProviderShared.VIDEO_MIMES)
+const AUDIO_MIMES = new Set<string>(ProviderShared.AUDIO_MIMES)
 export const DEFAULT_BASE_URL = "https://api.openai.com/v1"
 export const PATH = "/chat/completions"
 
@@ -64,6 +65,10 @@ const OpenAIChatUserContent = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("video_url"),
     video_url: Schema.Struct({ url: Schema.String }),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("input_audio"),
+    input_audio: Schema.Struct({ data: Schema.String }),
   }),
 ])
 
@@ -210,6 +215,10 @@ const lowerMedia = Effect.fn("OpenAIChat.lowerMedia")(function* (part: MediaPart
   if (mime.startsWith("video/")) {
     const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, VIDEO_MIMES)
     return { type: "video_url" as const, video_url: { url: media.dataUrl } }
+  }
+  if (mime.startsWith("audio/")) {
+    const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, AUDIO_MIMES)
+    return { type: "input_audio" as const, input_audio: { data: media.dataUrl } }
   }
   const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, IMAGE_MIMES)
   return { type: "image_url" as const, image_url: { url: media.dataUrl } }

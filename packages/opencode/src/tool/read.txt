@@ -11,4 +11,5 @@ Usage:
 - Any line longer than 2000 characters is truncated.
 - Call this tool in parallel when you know there are multiple files you want to read.
 - Avoid tiny repeated slices (30 line chunks). If you need more context, read a larger window.
-- This tool can read image files and PDFs and return them as file attachments.
+- This tool can read image files, PDFs, video files, and audio files and return them as file attachments.
+- Video and audio attachments require a multimodal model that declares the matching input modality (e.g. `video` and/or `audio` in the model's `modalities.input`), and they are only sent over the native runtime. Video/audio are base64-encoded, so single files must stay under 50 MB; larger files are rejected. Supported video: mp4, webm, mov, avi, mkv. Supported audio: mp3, wav, flac, m4a, ogg.

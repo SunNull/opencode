@@ -1,14 +1,18 @@
 import { Effect, Option, Schema, Scope, Stream } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
+import * as os from "node:os"
 import * as path from "path"
 import * as Tool from "./tool"
 import { FSUtil } from "@opencode-ai/core/fs-util"
+import { AppProcess } from "@opencode-ai/core/process"
+import { which } from "@opencode-ai/core/util/which"
+import { ChildProcess } from "effect/unstable/process"
 import { LSP } from "@/lsp/lsp"
 import DESCRIPTION from "./read.txt"
 import { InstanceState } from "@/effect/instance-state"
 import { assertExternalDirectoryEffect } from "./external-directory"
 import { Instruction } from "../session/instruction"
-import { isPdfAttachment, isVideoAttachment, sniffAttachmentMime } from "@/util/media"
+import { isAudioAttachment, isPdfAttachment, isVideoAttachment, sniffAttachmentMime } from "@/util/media"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
@@ -17,7 +21,7 @@ const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
 const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
-const MAX_VIDEO_BYTES = 50 * 1024 * 1024 // 50 MB — matches multimodal video API base64 limit
+const MAX_MEDIA_BYTES = 50 * 1024 * 1024 // 50 MB — matches multimodal video/audio base64 API limit
 
 class ReadStop extends Schema.TaggedErrorClass<ReadStop>()("ReadStop", {}) {}
 
@@ -73,6 +77,59 @@ export const ReadTool = Tool.define<
     const instruction = yield* Instruction.Service
     const lsp = yield* LSP.Service
     const scope = yield* Scope.Scope
+
+    const compressMedia = Effect.fn("ReadTool.compressMedia")(function* (filepath: string, isVideo: boolean) {
+      const bin = which("ffmpeg")
+      if (!bin) return yield* Effect.fail(new Error("ffmpeg not found in PATH"))
+      const ext = isVideo ? "mp4" : "m4a"
+      const outMime = isVideo ? "video/mp4" : "audio/mp4"
+      const out = path.join(
+        os.tmpdir(),
+        `opencode-media-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
+      )
+      const args = isVideo
+        ? [
+            "-y",
+            "-i",
+            filepath,
+            "-vf",
+            "scale='min(1280,iw)':-2",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "30",
+            "-preset",
+            "veryfast",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "96k",
+            "-movflags",
+            "+faststart",
+            out,
+          ]
+        : ["-y", "-i", filepath, "-c:a", "aac", "-b:a", "128k", out]
+      const result = yield* Effect.gen(function* () {
+        const appProcess = yield* AppProcess.Service
+        return yield* appProcess.run(
+          ChildProcess.make(bin, args, {
+            cwd: path.dirname(filepath),
+            extendEnv: true,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "pipe",
+          }),
+          { maxErrorBytes: 8192 },
+        )
+      }).pipe(Effect.provide(AppProcess.defaultLayer))
+      if (result.exitCode !== 0) {
+        yield* fs.remove(out).pipe(Effect.catch(() => Effect.void))
+        return yield* Effect.fail(
+          new Error(`ffmpeg exited ${result.exitCode}: ${result.stderr.toString("utf8").trim()}`),
+        )
+      }
+      return { path: out, mime: outMime }
+    })
 
     const miss = Effect.fn("ReadTool.miss")(function* (filepath: string) {
       const dir = path.dirname(filepath)
@@ -304,23 +361,34 @@ export const ReadTool = Tool.define<
       const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
       const isVideo = isVideoAttachment(mime)
+      const isAudio = isAudioAttachment(mime)
 
-      if (isImage || isPdfAttachment(mime) || isVideo) {
-        if (isVideo && Number(stat.size) > MAX_VIDEO_BYTES) {
-          return yield* Effect.fail(
-            new Error(
-              `Video file too large: ${(Number(stat.size) / 1024 / 1024).toFixed(1)} MB. ` +
-                `Max supported size is ${MAX_VIDEO_BYTES / 1024 / 1024} MB. ` +
-                `Compress or trim the video and retry.`,
+      if (isImage || isPdfAttachment(mime) || isVideo || isAudio) {
+        let mediaPath = filepath
+        let mediaMime = mime
+        if ((isVideo || isAudio) && Number(stat.size) > MAX_MEDIA_BYTES) {
+          const compressed = yield* compressMedia(filepath, isVideo).pipe(
+            Effect.mapError(
+              () =>
+                new Error(
+                  `${isVideo ? "Video" : "Audio"} file too large: ${(Number(stat.size) / 1024 / 1024).toFixed(1)} MB. ` +
+                    `Max supported size is ${MAX_MEDIA_BYTES / 1024 / 1024} MB and automatic ffmpeg compression failed or ffmpeg is unavailable. ` +
+                    `Compress or trim the file manually and retry.`,
+                ),
             ),
           )
+          mediaPath = compressed.path
+          mediaMime = compressed.mime
         }
-        const bytes = yield* fs.readFile(filepath)
+        const bytes = yield* fs.readFile(mediaPath)
+        if (mediaPath !== filepath) yield* fs.remove(mediaPath).pipe(Effect.catch(() => Effect.void))
         const msg = isPdfAttachment(mime)
           ? "PDF read successfully"
           : isVideo
             ? "Video read successfully"
-            : "Image read successfully"
+            : isAudio
+              ? "Audio read successfully"
+              : "Image read successfully"
         return {
           title,
           output: msg,
@@ -332,8 +400,8 @@ export const ReadTool = Tool.define<
           attachments: [
             {
               type: "file" as const,
-              mime,
-              url: `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`,
+              mime: mediaMime,
+              url: `data:${mediaMime};base64,${Buffer.from(bytes).toString("base64")}`,
             },
           ],
         }
