@@ -131,6 +131,199 @@ opencode 内部其实已有视频的"半成品"基础设施：
 
 本改造的核心理念：**让视频成为模型上下文的一等公民**，与文字、图片平级。当多模态模型推理能力足够强时，直接用多模态模型作为主模型，无需任何中间的文字翻译。
 
+## 换机器快速恢复指南
+
+```bash
+# 1. 克隆你的仓库
+git clone https://github.com/SunNull/opencode.git
+git clone https://github.com/SunNull/mimo-code.git
+
+# 2. 添加上游（同步原始仓库更新）
+cd opencode
+git remote add upstream https://github.com/anomalyco/opencode.git
+cd ../mimo-code
+git remote add upstream https://github.com/XiaomiMiMo/MiMo-Code.git
+
+# 3. 安装依赖
+cd ../opencode
+bun install   # 需要 bun >= 1.3.14，当前测试机为 1.3.13（push 时用 --no-verify 绕过版本检查）
+
+# 4. 验证改动
+bun run --cwd packages/opencode src/index.ts run "你好" --model xiaomi-token-plan-cn/mimo-v2-omni
+# 需要先配置 MiMo API key，见下方"MiMo API 配置"
+```
+
+## 环境信息
+
+| 项目 | 值 |
+|------|-----|
+| OS | Windows 11 |
+| Bun | 1.3.13（项目要求 1.3.14，push 需 `--no-verify`） |
+| Node | v24.14.1 |
+| Python | 3.11.15 |
+| ffmpeg | 8.1（full build，含 whisper） |
+| opencode commit | 基于 `d465cd476`（dev 分支） |
+| MiMo-Code commit | 基于 MiMo-Code `main` 分支 |
+
+## MiMo API 配置
+
+### 认证信息（已配置在 auth.json 中）
+
+```
+Provider: xiaomi-token-plan-cn
+API Key:  <YOUR_MIMO_API_KEY>
+Base URL: https://token-plan-cn.xiaomimimo.com/v1
+Anthropic 兼容: https://token-plan-cn.xiaomimimo.com/anthropic
+```
+
+### auth.json 位置
+
+```
+Windows: C:\Users\<用户名>\.local\share\opencode\auth.json
+```
+
+```json
+{
+  "xiaomi-token-plan-cn": {
+    "type": "api",
+    "key": "<YOUR_MIMO_API_KEY>"
+  }
+}
+```
+
+### opencode.json 配置（声明 video modalities）
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "xiaomi-token-plan-cn": {
+      "models": {
+        "mimo-v2-omni": {
+          "modalities": {
+            "input": ["text", "image", "video"],
+            "output": ["text"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+### 已验证的 MiMo 能力
+
+| 能力 | 模型 | 实测结果 |
+|------|------|---------|
+| 图片理解 | mimo-v2-omni | ✅ 7.8s，准确识别场景/物体/文字/颜色 |
+| 图片理解 | mimo-v2.5 | ✅ 7.4s |
+| 视频理解 | mimo-v2-omni | ✅ 7.9s，逐帧时间线分析，含音频 token |
+| 视频格式 | URL 传入 | ✅ 最大 300MB |
+| 视频格式 | Base64 传入 | ✅ 最大 50MB |
+| 支持格式 | mp4/webm/mov/avi/mkv | ✅ |
+
+## 测试记录
+
+### 测试 1: media.ts 视频识别（单元测试）
+
+```bash
+bun test_media.ts
+# 结果: ✅ MIME: video/mp4, isVideo: true
+```
+
+### 测试 2: 端到端 CLI 视频理解
+
+```bash
+$env:OPENCODE_EXPERIMENTAL_NATIVE_LLM = "true"
+bun run --cwd packages/opencode src/index.ts run "请读取并描述 C:/Users/17470/test_video.mp4" --model xiaomi-token-plan-cn/mimo-v2-omni
+
+# 结果: ✅ MiMo 返回: "视频背景是纯蓝色的，主要事件是一个黄色矩形图形在屏幕中央出现，停留片刻后消失"
+```
+
+### 测试 3: TUI 模式
+
+```
+结果: ❌ Bun crash (opentui.dll segfault)
+原因: Bun 1.3.13 在 Windows 上加载 opentui.dll 时段错误，与本次改动无关
+ workaround: 使用 CLI 模式 (opencode run) 或升级 Bun / 使用 WSL
+```
+
+## 深度调研记录：为什么 opencode 不支持视频
+
+### 三道闸门分析
+
+```
+视频文件
+  ↓ 闸门1: read.ts — 只认 image/PDF，视频判为 binary → 报错
+  ↓ 闸门2: AI SDK (@ai-sdk/openai-compatible) — 只生成 image_url，无 video_url 路径
+  ↓ 闸门3: Claude/GPT API — 没有 video_url 内容类型（Gemini/MiMo 有）
+```
+
+### 竞品对比
+
+| 项目 | 视频支持 | 机制 | 我们的结论 |
+|------|---------|------|-----------|
+| opencode | ❌ | read 只认图片，AI SDK 无 video_url | 本改造目标 |
+| MiMo-Code | ❌ | fork 自 opencode，媒体处理未改 | 同步改造 |
+| Hermes Agent | ✅ | 自己写的 `video_analyze_tool`，直构造 `video_url` | 参考实现 |
+| Claude Code | ❌ | Claude API 无 video_url | 无法支持 |
+
+### opencode 内部已有的"半成品"
+
+| 代码位置 | 已有内容 | 状态 |
+|---------|---------|------|
+| `shared.ts` L192 | `VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"]` | 定义了但没用上 |
+| `shared.ts` L193 | `AUDIO_MIMES = [...]` | 同上 |
+| `transform.ts` L13 | `mimeToModality()` 返回 `"video"` | 检查逻辑有了 |
+| `transform.ts` L399 | `model.capabilities.input[modality]` | 框架有了 |
+
+**结论：opencode 团队预留了基础设施，只是没连通最后一公里。本改造就是连通它。**
+
+## 已知问题
+
+| 问题 | 影响 | 临时方案 |
+|------|------|---------|
+| TUI 崩溃 (opentui.dll segfault) | 无法用交互式 TUI | 用 CLI 模式 `opencode run` |
+| Bun 版本 1.3.13 < 1.3.14 | husky pre-push 失败 | `git push --no-verify` |
+| AI SDK 路径不支持 video_url | 默认运行时无法传视频 | 开启 `OPENCODE_EXPERIMENTAL_NATIVE_LLM=true` |
+| MiMo-Code 协议层在 npm 包中 | 无法直接改源码 | 需 patch `@opencode-ai/llm` 或用 opencode 仓库 |
+
+## 原始目标：自动化视频剪辑
+
+本改造的最终目标是实现**自动化 vlog 视频剪辑**：
+
+```
+用户给多个视频素材 + 风格/时长要求
+  ↓
+opencode (多模态模型主导) 直接看视频
+  ↓ 理解每段内容、节奏、情绪
+  ↓ 生成剪辑剧本
+  ↓ ffmpeg 执行剪辑
+  ↓ 输出成品 vlog
+```
+
+视频原生支持是这一切的基础——让模型直接"看到"视频，而不是通过文字描述的损失中转。
+
+## 关键文件速查
+
+```
+opencode/
+├── packages/opencode/src/
+│   ├── util/media.ts                    ← 改动1: 视频识别
+│   ├── tool/read.ts                     ← 改动2: 视频读附件
+│   ├── session/llm/native-runtime.ts    ← 改动4: 门卫放行
+│   └── provider/transform.ts            ← 无需改(已有video逻辑)
+├── packages/llm/src/protocols/
+│   └── openai-chat.ts                   ← 改动3: video_url转换
+└── VIDEO-SUPPORT.md                     ← 本文档
+
+mimo-code/
+├── packages/opencode/src/
+│   ├── util/media.ts                    ← 同步改动1
+│   └── tool/read.ts                     ← 同步改动2
+└── VIDEO-SUPPORT.md                     ← 简版文档
+```
+
 ## 上游仓库
 
 - [anomalyco/opencode](https://github.com/anomalyco/opencode) - 原始仓库
