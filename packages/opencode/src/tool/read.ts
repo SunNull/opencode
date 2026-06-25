@@ -21,7 +21,7 @@ const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
 const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
-const MAX_MEDIA_BYTES = 50 * 1024 * 1024 // 50 MB — matches multimodal video/audio base64 API limit
+const MAX_MEDIA_BYTES = 37 * 1024 * 1024 // ~37MB raw → <50MB base64 (matches protocol + MiMo limit); compress above this
 
 class ReadStop extends Schema.TaggedErrorClass<ReadStop>()("ReadStop", {}) {}
 
@@ -83,52 +83,71 @@ export const ReadTool = Tool.define<
       if (!bin) return yield* Effect.fail(new Error("ffmpeg not found in PATH"))
       const ext = isVideo ? "mp4" : "m4a"
       const outMime = isVideo ? "video/mp4" : "audio/mp4"
-      const out = path.join(
-        os.tmpdir(),
-        `opencode-media-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
-      )
-      const args = isVideo
+      const maxRaw = 36 * 1024 * 1024
+      const attempts = isVideo
         ? [
-            "-y",
-            "-i",
-            filepath,
-            "-vf",
-            "scale='min(1280,iw)':-2",
-            "-c:v",
-            "libx264",
-            "-crf",
-            "30",
-            "-preset",
-            "veryfast",
-            "-c:a",
-            "aac",
-            "-b:a",
-            "96k",
-            "-movflags",
-            "+faststart",
-            out,
+            { vf: "scale='min(1280,iw)':-2", crf: "28", br: "96k" },
+            { vf: "scale='min(1024,iw)':-2", crf: "33", br: "64k" },
+            { vf: "scale='min(854,iw)':-2", crf: "38", br: "48k" },
           ]
-        : ["-y", "-i", filepath, "-c:a", "aac", "-b:a", "128k", out]
-      const result = yield* Effect.gen(function* () {
-        const appProcess = yield* AppProcess.Service
-        return yield* appProcess.run(
-          ChildProcess.make(bin, args, {
-            cwd: path.dirname(filepath),
-            extendEnv: true,
-            stdin: "ignore",
-            stdout: "ignore",
-            stderr: "pipe",
-          }),
-          { maxErrorBytes: 8192 },
+        : [
+            { vf: "", crf: "", br: "128k" },
+            { vf: "", crf: "", br: "96k" },
+            { vf: "", crf: "", br: "64k" },
+          ]
+      for (const a of attempts) {
+        const out = path.join(
+          os.tmpdir(),
+          `opencode-media-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`,
         )
-      }).pipe(Effect.provide(AppProcess.defaultLayer))
-      if (result.exitCode !== 0) {
+        const args = isVideo
+          ? [
+              "-y",
+              "-i",
+              filepath,
+              "-vf",
+              a.vf,
+              "-c:v",
+              "libx264",
+              "-crf",
+              a.crf,
+              "-preset",
+              "veryfast",
+              "-c:a",
+              "aac",
+              "-b:a",
+              a.br,
+              "-movflags",
+              "+faststart",
+              out,
+            ]
+          : ["-y", "-i", filepath, "-c:a", "aac", "-b:a", a.br, out]
+        const result = yield* Effect.gen(function* () {
+          const appProcess = yield* AppProcess.Service
+          return yield* appProcess.run(
+            ChildProcess.make(bin, args, {
+              cwd: path.dirname(filepath),
+              extendEnv: true,
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "pipe",
+            }),
+            { maxErrorBytes: 8192 },
+          )
+        }).pipe(Effect.provide(AppProcess.defaultLayer))
+        if (result.exitCode !== 0) {
+          yield* fs.remove(out).pipe(Effect.catch(() => Effect.void))
+          continue
+        }
+        const stat = yield* fs.stat(out).pipe(Effect.catch(() => Effect.succeed(undefined)))
+        if (stat && Number(stat.size) <= maxRaw) return { path: out, mime: outMime }
         yield* fs.remove(out).pipe(Effect.catch(() => Effect.void))
-        return yield* Effect.fail(
-          new Error(`ffmpeg exited ${result.exitCode}: ${result.stderr.toString("utf8").trim()}`),
-        )
       }
-      return { path: out, mime: outMime }
+      return yield* Effect.fail(
+        new Error(
+          "Could not compress media below 50MB after multiple attempts; the file may be too long. Trim it manually and retry.",
+        ),
+      )
     })
 
     const miss = Effect.fn("ReadTool.miss")(function* (filepath: string) {
@@ -395,14 +414,16 @@ export const ReadTool = Tool.define<
         const MEDIA_BUDGET_MB = 100 // conservative total base64 budget per API request
         let cumulativeMediaMB = 0
         const sizePattern = /(?:Video|Audio) read successfully \(([\d.]+) MB/
-        for (const m of ctx.messages) {
+        for (const m of ctx.messages as Record<string, unknown>[]) {
           let s: string | undefined
-          if (typeof m.content === "string") {
-            s = m.content.slice(0, 300)
-          } else if (Array.isArray(m.content)) {
-            for (const part of m.content as any[]) {
+          const content = m.content
+          if (typeof content === "string") {
+            s = content.slice(0, 300)
+          } else if (Array.isArray(content)) {
+            for (const part of content as Record<string, unknown>[]) {
               if (part.type === "tool-result") {
-                const out = typeof part.output === "string" ? part.output : part.output?.value ?? part.output?.text
+                const output = part.output
+                const out = typeof output === "string" ? output : (output as Record<string, unknown> | undefined)?.value ?? (output as Record<string, unknown> | undefined)?.text
                 if (typeof out === "string") { s = out.slice(0, 300); break }
               }
             }

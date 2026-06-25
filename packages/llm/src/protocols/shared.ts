@@ -192,8 +192,8 @@ export const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"
 export const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime"] as const
 export const AUDIO_MIMES = ["audio/wav", "audio/mp3", "audio/mpeg", "audio/aiff", "audio/aac", "audio/ogg", "audio/flac", "audio/m4a", "audio/x-m4a", "audio/mp4"] as const
 export const MEDIA_MIMES = [...IMAGE_MIMES, ...VIDEO_MIMES, ...AUDIO_MIMES] as const
-export const MAX_MEDIA_ENCODED_BYTES = 28 * 1024 * 1024
-export const MAX_MEDIA_DECODED_BYTES = 20 * 1024 * 1024
+export const MAX_MEDIA_ENCODED_BYTES = 50 * 1024 * 1024
+export const MAX_MEDIA_DECODED_BYTES = 37 * 1024 * 1024
 
 const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
 
@@ -229,7 +229,7 @@ export const validateMedia = Effect.fn("ProviderShared.validateMedia")(function*
 
   if (Buffer.byteLength(base64, "utf8") > MAX_MEDIA_ENCODED_BYTES)
     return yield* invalidRequest(`${route} media exceeds the ${MAX_MEDIA_ENCODED_BYTES} byte encoded limit`)
-  if (!base64 || base64.length % 4 !== 0 || !base64Pattern.test(base64))
+  if (!base64 || base64.length % 4 !== 0)
     return yield* invalidRequest(`${route} media must contain valid base64`)
   const bytes = Buffer.from(base64, "base64")
   if (bytes.byteLength > MAX_MEDIA_DECODED_BYTES)
