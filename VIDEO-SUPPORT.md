@@ -93,10 +93,10 @@ opencode 内部其实已有视频的"半成品"基础设施：
    ```
 
 ### 限制
-- 视频文件上限：50MB（base64 编码后）
-- 支持格式：mp4、webm、mov、avi、mkv、mpeg
+- 视频/音频文件上限：50MB（超限自动 ffmpeg 压缩，压缩失败则报错）
+- 视频格式：mp4、webm、mov、avi、mkv；音频格式：mp3、wav、flac、ogg
 - 仅在 Native Runtime 路径下有效（AI SDK 路径的 `@ai-sdk/openai-compatible` 尚未 patch）
-- TUI 模式在 Windows 上可能因 Bun 的 `opentui.dll` bug 崩溃，CLI 模式正常
+- TUI 需要 Bun >= 1.3.14（1.3.13 的 `opentui.dll` 会 segfault，已确认 1.3.14 修复）
 
 ## 已完成
 
@@ -113,8 +113,8 @@ opencode 内部其实已有视频的"半成品"基础设施：
 
 ## 进行中
 
-- [ ] TUI 模式 Windows 崩溃修复（Bun `opentui.dll` segfault）
-- [ ] 模型 modalities 配置标准化
+- [x] TUI 模式 Windows 崩溃修复 — **升级 Bun 到 1.3.14 解决**（1.3.13 的 opentui.dll segfault 已确认修复）
+- [x] 模型 modalities 配置标准化 — 已提供 `opencode.multimodal.example.json` 示例配置
 
 ## 未来计划
 
