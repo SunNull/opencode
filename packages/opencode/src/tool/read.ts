@@ -380,20 +380,37 @@ export const ReadTool = Tool.define<
           mediaPath = compressed.path
           mediaMime = compressed.mime
         }
-        const bytes = yield* fs.readFile(mediaPath)
-        if (mediaPath !== filepath) yield* fs.remove(mediaPath).pipe(Effect.catch(() => Effect.void))
+        let bytes: Uint8Array
+        try {
+          bytes = yield* fs.readFile(mediaPath)
+        } finally {
+          if (mediaPath !== filepath) yield* fs.remove(mediaPath).pipe(Effect.catch(() => Effect.void))
+        }
         const sizeMB = (Number(stat.size) / 1024 / 1024).toFixed(1)
         const wasCompressed = mediaPath !== filepath
 
         // Track cumulative media size in context — give the model a budget dashboard
-        // so it can self-decide how many media files to read per turn
+        // so it can self-decide how many media files to read per turn.
+        // Only scan tool-result text (first 300 chars) — skip base64 attachment data.
         const MEDIA_BUDGET_MB = 100 // conservative total base64 budget per API request
         let cumulativeMediaMB = 0
         const sizePattern = /(?:Video|Audio) read successfully \(([\d.]+) MB/
         for (const m of ctx.messages) {
-          const s = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
-          const match = s.match(sizePattern)
-          if (match) cumulativeMediaMB += parseFloat(match[1])
+          let s: string | undefined
+          if (typeof m.content === "string") {
+            s = m.content.slice(0, 300)
+          } else if (Array.isArray(m.content)) {
+            for (const part of m.content as any[]) {
+              if (part.type === "tool-result") {
+                const out = typeof part.output === "string" ? part.output : part.output?.value ?? part.output?.text
+                if (typeof out === "string") { s = out.slice(0, 300); break }
+              }
+            }
+          }
+          if (s) {
+            const match = s.match(sizePattern)
+            if (match) cumulativeMediaMB += parseFloat(match[1])
+          }
         }
         const currentMB = parseFloat(sizeMB)
         cumulativeMediaMB += currentMB

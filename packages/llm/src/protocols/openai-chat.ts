@@ -68,7 +68,7 @@ const OpenAIChatUserContent = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("input_audio"),
-    input_audio: Schema.Struct({ data: Schema.String }),
+    input_audio: Schema.Struct({ data: Schema.String, format: Schema.optional(Schema.String) }),
   }),
 ])
 
@@ -218,7 +218,8 @@ const lowerMedia = Effect.fn("OpenAIChat.lowerMedia")(function* (part: MediaPart
   }
   if (mime.startsWith("audio/")) {
     const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, AUDIO_MIMES)
-    return { type: "input_audio" as const, input_audio: { data: media.dataUrl } }
+    const format = mime.includes("wav") ? "wav" : mime.includes("ogg") ? "ogg" : "mp3"
+    return { type: "input_audio" as const, input_audio: { data: media.base64, format } }
   }
   const media = yield* ProviderShared.validateMedia("OpenAI Chat", part, IMAGE_MIMES)
   return { type: "image_url" as const, image_url: { url: media.dataUrl } }
