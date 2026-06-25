@@ -385,22 +385,36 @@ export const ReadTool = Tool.define<
         const sizeMB = (Number(stat.size) / 1024 / 1024).toFixed(1)
         const wasCompressed = mediaPath !== filepath
 
-        // Detect existing media attachments in conversation to prevent API overflow
-        let existingMedia = 0
+        // Track cumulative media size in context — give the model a budget dashboard
+        // so it can self-decide how many media files to read per turn
+        const MEDIA_BUDGET_MB = 100 // conservative total base64 budget per API request
+        let cumulativeMediaMB = 0
+        const sizePattern = /(?:Video|Audio) read successfully \(([\d.]+) MB/
         for (const m of ctx.messages) {
           const s = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
-          if (s.includes("Video read successfully") || s.includes("Audio read successfully")) existingMedia++
+          const match = s.match(sizePattern)
+          if (match) cumulativeMediaMB += parseFloat(match[1])
         }
-        const mediaWarning = existingMedia > 0
-          ? ` WARNING: ${existingMedia} media file(s) already in context. Reading more may exceed API size limits. Analyze existing media first, then read the next file.`
+        const currentMB = parseFloat(sizeMB)
+        cumulativeMediaMB += currentMB
+        const remainingMB = Math.max(0, MEDIA_BUDGET_MB - cumulativeMediaMB)
+        const pct = Math.round((cumulativeMediaMB / MEDIA_BUDGET_MB) * 100)
+
+        const budgetInfo = (isVideo || isAudio)
+          ? ` [Media budget: ${cumulativeMediaMB.toFixed(1)}/${MEDIA_BUDGET_MB} MB (${pct}% used), ${remainingMB.toFixed(1)} MB left` +
+            (pct >= 80
+              ? ` — STOP: do not read more media this turn.]`
+              : pct >= 60
+                ? ` — caution: limited room for more media.]`
+                : ` — room for more media.]`)
           : ""
 
         const msg = isPdfAttachment(mime)
           ? "PDF read successfully"
           : isVideo
-            ? `Video read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The video is now in your context as a visual attachment — you can see and analyze it directly. Do NOT call external video analysis tools.${mediaWarning}`
+            ? `Video read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed" : ""}). The video is in your context — analyze it directly, do NOT use external tools.${budgetInfo}`
             : isAudio
-              ? `Audio read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The audio is now in your context — you can hear and analyze it directly. Do NOT call external audio analysis tools.${mediaWarning}`
+              ? `Audio read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed" : ""}). The audio is in your context — analyze it directly, do NOT use external tools.${budgetInfo}`
               : "Image read successfully"
         return {
           title,
