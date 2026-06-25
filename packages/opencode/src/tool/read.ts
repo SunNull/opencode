@@ -382,12 +382,14 @@ export const ReadTool = Tool.define<
         }
         const bytes = yield* fs.readFile(mediaPath)
         if (mediaPath !== filepath) yield* fs.remove(mediaPath).pipe(Effect.catch(() => Effect.void))
+        const sizeMB = (Number(stat.size) / 1024 / 1024).toFixed(1)
+        const wasCompressed = mediaPath !== filepath
         const msg = isPdfAttachment(mime)
           ? "PDF read successfully"
           : isVideo
-            ? "Video read successfully"
+            ? `Video read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The video is now in your context as a visual attachment — you can see and analyze it directly. Do NOT call external video analysis tools; respond based on what you see.`
             : isAudio
-              ? "Audio read successfully"
+              ? `Audio read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The audio is now in your context — you can hear and analyze it directly. Do NOT call external audio analysis tools.`
               : "Image read successfully"
         return {
           title,
