@@ -14,4 +14,5 @@ Usage:
 - This tool can read image files, PDFs, video files, and audio files and return them as file attachments.
 - Video and audio attachments are sent directly to the model as visual/audio input — the model can see/hear them natively. Do NOT use external analysis tools after reading media.
 - Video and audio files over 50 MB are automatically compressed via ffmpeg (H.264 video / AAC audio) before sending. If ffmpeg is unavailable or compression fails, an error is returned.
+- IMPORTANT: Media attachments are large (base64-encoded, ~1.3x original size). API requests have a TOTAL size limit. When analyzing multiple videos or audio files, you MUST read and analyze them ONE AT A TIME: read one file, analyze it, respond, then read the next. Do NOT read multiple media files in the same turn or in parallel — this will exceed the API size limit and cause errors.
 - Supported video: mp4, webm, mov, avi, mkv. Supported audio: mp3, wav, flac, m4a, ogg.

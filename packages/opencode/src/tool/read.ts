@@ -384,12 +384,23 @@ export const ReadTool = Tool.define<
         if (mediaPath !== filepath) yield* fs.remove(mediaPath).pipe(Effect.catch(() => Effect.void))
         const sizeMB = (Number(stat.size) / 1024 / 1024).toFixed(1)
         const wasCompressed = mediaPath !== filepath
+
+        // Detect existing media attachments in conversation to prevent API overflow
+        let existingMedia = 0
+        for (const m of ctx.messages) {
+          const s = typeof m.content === "string" ? m.content : JSON.stringify(m.content)
+          if (s.includes("Video read successfully") || s.includes("Audio read successfully")) existingMedia++
+        }
+        const mediaWarning = existingMedia > 0
+          ? ` WARNING: ${existingMedia} media file(s) already in context. Reading more may exceed API size limits. Analyze existing media first, then read the next file.`
+          : ""
+
         const msg = isPdfAttachment(mime)
           ? "PDF read successfully"
           : isVideo
-            ? `Video read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The video is now in your context as a visual attachment — you can see and analyze it directly. Do NOT call external video analysis tools; respond based on what you see.`
+            ? `Video read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The video is now in your context as a visual attachment — you can see and analyze it directly. Do NOT call external video analysis tools.${mediaWarning}`
             : isAudio
-              ? `Audio read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The audio is now in your context — you can hear and analyze it directly. Do NOT call external audio analysis tools.`
+              ? `Audio read successfully (${sizeMB} MB${wasCompressed ? ", auto-compressed via ffmpeg" : ""}). The audio is now in your context — you can hear and analyze it directly. Do NOT call external audio analysis tools.${mediaWarning}`
               : "Image read successfully"
         return {
           title,
