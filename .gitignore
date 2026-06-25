@@ -32,3 +32,11 @@ UPCOMING_CHANGELOG.md
 logs/
 *.bun-build
 tsconfig.tsbuildinfo
+
+# Test artifacts
+test_video.mp4
+test_v*.mp4
+test_multimodal.*
+test_*_frame.*
+analyze_color.py
+*frame*.png
