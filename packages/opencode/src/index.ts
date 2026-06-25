@@ -29,7 +29,9 @@ import { DbCommand } from "./cli/cmd/db"
 import { errorMessage } from "./util/error"
 import { PluginCommand } from "./cli/cmd/plug"
 import { Heap } from "./cli/heap"
+import { registerSpinner } from "opentui-spinner/solid"
 
+registerSpinner()
 const args = hideBin(process.argv)
 
 function show(out: string) {
